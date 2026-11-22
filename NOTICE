@@ -1,0 +1,31 @@
+DSH-Let's go — DeepSeek Harness native Android port
+Copyright 2026 DSH-Let's go contributors
+
+This project is a modified version of DeepSeek Harness
+(https://github.com/deepseek-ai/deepseek-harness), MIT License,
+Copyright (c) 2026 DeepSeek. The full, unmodified upstream license text is
+preserved verbatim in LICENSE-DeepSeek-Harness.txt, as required by that
+license. Upstream baseline: 0.2.2-rc.5.
+
+License scope of this repository:
+
+  1. The Android port shell code, build scripts, and documentation in this
+     repository are licensed under the Apache License, Version 2.0 (LICENSE).
+
+  2. The DeepSeek Harness runtime that this port executes (the
+     `@deepseek-ai/*` node_modules payload bundled into the APK at build
+     time) is NOT part of this repository. It is built from the upstream
+     project and remains under its original MIT License,
+     Copyright (c) 2026 DeepSeek.
+
+  3. No model credentials are included: every user configures their own
+     DeepSeek account (Sign in) or API key (Add API Key) inside the app;
+     credentials are persisted only in the app's private storage on the
+     device.
+
+Modification notice (MIT §4 / Apache 2.0 §4(b) compliance): all source files
+in this repository relative to the upstream project constitute the Android
+port adaptation — embedded bionic Node.js runtime integration, Android
+foreground-service + WebView shell, mobile profile overlay
+(`profile/android-profile/`), and platform-difference fixes. See README.md
+"声明：基于官方修改版本" for the complete list.
