@@ -53,8 +53,6 @@ public class DshService extends Service {
     private static final long RESTART_DELAY_MS = 3000;
     private static final int MAX_AUTO_RESTARTS = 5;
 
-    private static final String DEEPSEEK_API_KEY = "sk-2134601bc35abf892ba0dc3b7a16d6f3bda7";
-    private static final String W_API_KEY = "sk-2134601bc35abf892ba0dc3b7a16d6f3bda7";
     private static final String CA_BUNDLE_NAME = "cacert.pem";
     private static final String SYSTEM_CA_DIR = "/system/etc/security/cacerts";
 
@@ -193,7 +191,6 @@ public class DshService extends Service {
             }
 
             File binJs = new File(nodeModules, "@deepseek-ai/dsh/lib/bin.js");
-            writeWebUrl(null);
 
             List<String> cmd = new ArrayList<>();
             cmd.add(nodeBin.getAbsolutePath());
@@ -233,8 +230,7 @@ public class DshService extends Service {
             env.put("DSH_NODE_BIN", nodeBin.getAbsolutePath());
             env.put("DSH_PNPM_JS", filesDir + "/runtime/dsh/pnpm/pnpm.js");
             env.put("DSH_NPM_JS", filesDir + "/runtime/dsh/pnpm/npm.js");
-            env.put("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY);
-            env.put("W_API_KEY", W_API_KEY);
+
             env.put("TMPDIR", filesDir + "/tmp");
             env.put("PATH", binDir.getAbsolutePath() + ":" + nativeDir + ":"
                     + abiLibs.getAbsolutePath() + ":/system/bin:/system/xbin");
@@ -292,36 +288,36 @@ public class DshService extends Service {
         ensureDir(binDir);
         int created = 0;
         int skipped = 0;
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                new FileInputStream(symlinksFile)));
-        String line;
-        while ((line = reader.readLine()) != null) {
-            line = line.replace("\uFEFF", "").replace("\r", "").trim();
-            if (line.isEmpty()) continue;
-            int tab = line.indexOf('\t');
-            if (tab <= 0) continue;
-            String tool = line.substring(0, tab).trim();
-            String lib = line.substring(tab + 1).trim();
-            if (tool.isEmpty() || lib.isEmpty()) continue;
-            File link = new File(binDir, tool);
-            if (link.exists()) {
-                skipped++;
-                continue;
-            }
-            File target = new File(nativeDir, lib);
-            if (!target.exists()) {
-                Log.w(TAG_SHELL, "link target missing for " + tool + ": " + target);
-                continue;
-            }
-            try {
-                Os.symlink(target.getAbsolutePath(), link.getAbsolutePath());
-                link.setExecutable(true, false);
-                created++;
-            } catch (ErrnoException e) {
-                Log.w(TAG_SHELL, "symlink failed for " + tool + ": " + e.getMessage());
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(symlinksFile)))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.replace("\uFEFF", "").replace("\r", "").trim();
+                if (line.isEmpty()) continue;
+                int tab = line.indexOf('\t');
+                if (tab <= 0) continue;
+                String tool = line.substring(0, tab).trim();
+                String lib = line.substring(tab + 1).trim();
+                if (tool.isEmpty() || lib.isEmpty()) continue;
+                File link = new File(binDir, tool);
+                if (link.exists()) {
+                    skipped++;
+                    continue;
+                }
+                File target = new File(nativeDir, lib);
+                if (!target.exists()) {
+                    Log.w(TAG_SHELL, "link target missing for " + tool + ": " + target);
+                    continue;
+                }
+                try {
+                    Os.symlink(target.getAbsolutePath(), link.getAbsolutePath());
+                    link.setExecutable(true, false);
+                    created++;
+                } catch (ErrnoException e) {
+                    Log.w(TAG_SHELL, "symlink failed for " + tool + ": " + e.getMessage());
+                }
             }
         }
-        reader.close();
         Log.i(TAG_SHELL, "symlinks created=" + created + " skipped=" + skipped);
         return created;
     }
@@ -431,7 +427,11 @@ public class DshService extends Service {
                         Log.i(TAG, "extraction progress: " + fileCount + " files...");
                     }
                 }
-                zis.closeEntry();
+                try {
+                    zis.closeEntry();
+                } catch (IOException ignored) {
+
+                }
             }
         }
         Log.i(TAG, "extraction done: " + fileCount + " files, " + dirCount + " dirs -> "
