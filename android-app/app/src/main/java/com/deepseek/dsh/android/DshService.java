@@ -74,7 +74,10 @@ public class DshService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Notification notification = buildNotification(
                 "DSH 运行时启动中", "正在准备 runtime 并拉起 node…");
-        if (Build.VERSION.SDK_INT >= 29) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(FOREGROUND_NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else if (Build.VERSION.SDK_INT >= 29) {
             startForeground(FOREGROUND_NOTIFICATION_ID, notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         } else {
@@ -92,6 +95,12 @@ public class DshService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        Log.i(TAG, "onTaskRemoved: task swiped away; foreground service keeps node alive");
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override
