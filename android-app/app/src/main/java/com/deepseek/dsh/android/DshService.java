@@ -11,11 +11,14 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.util.Log;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -23,6 +26,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -35,6 +39,7 @@ public class DshService extends Service {
 
     private static final String TAG = "DshService";
     private static final String TAG_NODE = "DshNode";
+    private static final String TAG_SHELL = "DshShell";
     private static final String CHANNEL_ID = "dsh";
     private static final int FOREGROUND_NOTIFICATION_ID = 1;
     private static final int UPDATE_NOTIFICATION_ID = 2;
@@ -43,12 +48,15 @@ public class DshService extends Service {
     private static final String RUNTIME_ASSET = "runtime/dsh-runtime.zip";
     private static final String LIBS_ASSET_ROOT = "libs.zip";
     private static final String DSH_HOME_ASSET = "dsh-home.zip";
-
-    private static final String CA_BUNDLE_NAME = "cacert.pem";
-    private static final String SYSTEM_CA_DIR = "/system/etc/security/cacerts";
+    private static final String SHELL_ASSET = "shell.zip";
     private static final String WEB_URL_PREFIX = "dsh web: ";
     private static final long RESTART_DELAY_MS = 3000;
     private static final int MAX_AUTO_RESTARTS = 5;
+
+    private static final String DEEPSEEK_API_KEY = "sk-2134601bc35abf892ba0dc3b7a16d6f3bda7";
+    private static final String W_API_KEY = "sk-2134601bc35abf892ba0dc3b7a16d6f3bda7";
+    private static final String CA_BUNDLE_NAME = "cacert.pem";
+    private static final String SYSTEM_CA_DIR = "/system/etc/security/cacerts";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -74,10 +82,7 @@ public class DshService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Notification notification = buildNotification(
                 "DSH 运行时启动中", "正在准备 runtime 并拉起 node…");
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(FOREGROUND_NOTIFICATION_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        } else if (Build.VERSION.SDK_INT >= 29) {
+        if (Build.VERSION.SDK_INT >= 29) {
             startForeground(FOREGROUND_NOTIFICATION_ID, notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         } else {
@@ -98,12 +103,6 @@ public class DshService extends Service {
     }
 
     @Override
-    public void onTaskRemoved(Intent rootIntent) {
-        Log.i(TAG, "onTaskRemoved: task swiped away; foreground service keeps node alive");
-        super.onTaskRemoved(rootIntent);
-    }
-
-    @Override
     public void onDestroy() {
         serviceStopping.set(true);
         mainHandler.removeCallbacksAndMessages(null);
@@ -118,6 +117,7 @@ public class DshService extends Service {
 
     private void runNodeLoop() {
         try {
+            String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "x86_64";
             File runtimeRoot = new File(getFilesDir(), "runtime");
             File nodeModules = new File(runtimeRoot, "dsh/node_modules");
 
@@ -134,7 +134,6 @@ public class DshService extends Service {
                 Log.i(TAG, "runtime already extracted at " + nodeModules);
             }
 
-            String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "x86_64";
             File libsRoot = new File(getFilesDir(), "libs");
             File abiLibs = new File(libsRoot, abi);
             if (!new File(abiLibs, "libcrypto.so.3").exists()) {
@@ -164,7 +163,18 @@ public class DshService extends Service {
                 Log.i(TAG, "dsh-home already extracted at " + dshHomeDir);
             }
 
-            File nodeBin = new File(getApplicationInfo().nativeLibraryDir, NODE_BINARY_NAME);
+            String nativeDir = getApplicationInfo().nativeLibraryDir;
+            File binDir = new File(getFilesDir(), "bin");
+            try {
+                int linked = prepareShellTools(abi, nativeDir, binDir);
+                Log.i(TAG_SHELL, "shell tools linked: " + linked);
+            } catch (Exception e) {
+                Log.e(TAG_SHELL, "shell tool preparation failed", e);
+            }
+            ensureDir(new File(getFilesDir(), "tmp"));
+
+            runShellSelfTest(binDir, nativeDir, abiLibs.getAbsolutePath());
+            File nodeBin = new File(nativeDir, NODE_BINARY_NAME);
             if (!nodeBin.exists()) {
                 Log.w(TAG, "node binary not ready: " + nodeBin.getAbsolutePath());
                 notifyState("node 二进制未就绪", "jniLibs 缺少 " + NODE_BINARY_NAME + "，等待集成");
@@ -173,8 +183,8 @@ public class DshService extends Service {
             }
 
             File binJs = new File(nodeModules, "@deepseek-ai/dsh/lib/bin.js");
-
             writeWebUrl(null);
+
             List<String> cmd = new ArrayList<>();
             cmd.add(nodeBin.getAbsolutePath());
             cmd.add("--expose-internals");
@@ -186,8 +196,6 @@ public class DshService extends Service {
             cmd.add("3080");
 
             String filesDir = getFilesDir().getAbsolutePath();
-            String nativeDir = getApplicationInfo().nativeLibraryDir;
-            ensureDir(new File(filesDir, "dsh-home"));
             ensureDir(new File(filesDir, "workspace"));
             ensureDir(new File(filesDir, "logs"));
 
@@ -199,16 +207,19 @@ public class DshService extends Service {
             env.put("DSH_HOME", dshHomeDir.getAbsolutePath());
             env.put("DSH_WORKSPACE", filesDir + "/workspace");
             env.put("NODE_PATH", nodeModules.getAbsolutePath());
-
+            env.put("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY);
+            env.put("W_API_KEY", W_API_KEY);
+            env.put("TMPDIR", filesDir + "/tmp");
+            env.put("PATH", binDir.getAbsolutePath() + ":" + nativeDir + ":"
+                    + abiLibs.getAbsolutePath() + ":/system/bin:/system/xbin");
             File caBundle = ensureCaBundle();
             if (caBundle != null) {
                 env.put("NODE_EXTRA_CA_CERTS", caBundle.getAbsolutePath());
             }
-            env.put("PATH", nativeDir + ":" + abiLibs.getAbsolutePath() + ":/system/bin:/system/xbin");
             Log.i(TAG_NODE, "starting node: " + cmd);
-            Log.i(TAG_NODE, "env: LD_LIBRARY_PATH=" + abiLibs.getAbsolutePath() + ":" + nativeDir
-                    + " HOME=" + filesDir
-                    + " DSH_HOME=" + dshHomeDir
+            Log.i(TAG_NODE, "env: PATH=" + env.get("PATH") + " TMPDIR=" + env.get("TMPDIR")
+                    + " LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH")
+                    + " HOME=" + filesDir + " DSH_HOME=" + dshHomeDir
                     + " DSH_WORKSPACE=" + filesDir + "/workspace"
                     + " NODE_PATH=" + nodeModules);
 
@@ -221,8 +232,7 @@ public class DshService extends Service {
             while ((line = reader.readLine()) != null) {
                 Log.i(TAG_NODE, line);
                 if (line.startsWith(WEB_URL_PREFIX)) {
-                    String url = line.substring(WEB_URL_PREFIX.length()).trim();
-                    writeWebUrl(url);
+                    writeWebUrl(line.substring(WEB_URL_PREFIX.length()).trim());
                 }
             }
 
@@ -241,44 +251,97 @@ public class DshService extends Service {
         }
     }
 
-    private File ensureCaBundle() {
-        File bundle = new File(getFilesDir(), CA_BUNDLE_NAME);
-        if (bundle.exists() && bundle.length() > 0) {
-            return bundle;
+    private int prepareShellTools(String abi, String nativeDir, File binDir) throws IOException, ErrnoException {
+        File shellRoot = new File(getFilesDir(), "shell");
+        File symlinksFile = new File(shellRoot, abi + "/symlinks.txt");
+        if (!symlinksFile.exists()) {
+            unzipAsset(SHELL_ASSET, shellRoot);
         }
-        File[] certs = new File(SYSTEM_CA_DIR).listFiles();
-        if (certs == null || certs.length == 0) {
-            Log.w(TAG, "no system CA certs at " + SYSTEM_CA_DIR);
-            return null;
+        if (!symlinksFile.exists()) {
+            Log.w(TAG_SHELL, "symlinks manifest missing for " + abi);
+            return 0;
         }
-        java.util.Arrays.sort(certs);
-        try (FileOutputStream fos = new FileOutputStream(bundle)) {
-            byte[] newline = "\n".getBytes();
-            for (File cert : certs) {
-                byte[] pem = readAllBytes(cert);
-                if (pem == null || pem.length == 0) continue;
-                fos.write(pem);
-                fos.write(newline);
+        ensureDir(binDir);
+        int created = 0;
+        int skipped = 0;
+        BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(symlinksFile)));
+        String line;
+        while ((line = reader.readLine()) != null) {
+            line = line.replace("\uFEFF", "").replace("\r", "").trim();
+            if (line.isEmpty()) continue;
+            int tab = line.indexOf('\t');
+            if (tab <= 0) continue;
+            String tool = line.substring(0, tab).trim();
+            String lib = line.substring(tab + 1).trim();
+            if (tool.isEmpty() || lib.isEmpty()) continue;
+            File link = new File(binDir, tool);
+            if (link.exists()) {
+                skipped++;
+                continue;
             }
-            Log.i(TAG, "CA bundle built: " + certs.length + " certs -> " + bundle.getAbsolutePath());
-            return bundle;
-        } catch (IOException e) {
-            Log.e(TAG, "CA bundle build failed", e);
-            return null;
+            File target = new File(nativeDir, lib);
+            if (!target.exists()) {
+                Log.w(TAG_SHELL, "link target missing for " + tool + ": " + target);
+                continue;
+            }
+            try {
+                Os.symlink(target.getAbsolutePath(), link.getAbsolutePath());
+                link.setExecutable(true, false);
+                created++;
+            } catch (ErrnoException e) {
+                Log.w(TAG_SHELL, "symlink failed for " + tool + ": " + e.getMessage());
+            }
         }
+        reader.close();
+        Log.i(TAG_SHELL, "symlinks created=" + created + " skipped=" + skipped);
+        return created;
     }
 
-    private byte[] readAllBytes(File file) {
-        try (InputStream in = new java.io.FileInputStream(file);
-             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                bos.write(buf, 0, n);
+    private void runShellSelfTest(File binDir, String nativeDir, String abiLibsPath) {
+        File bash = new File(binDir, "bash");
+        if (!bash.exists()) {
+            Log.i(TAG_SHELL, "SHELL-SELFTEST-FAIL bash missing at " + bash);
+            return;
+        }
+        File bashDirect = new File(nativeDir, "libbash.so");
+        shellSelfTest(bash, "bash-echo-symlink", "echo DSH_BASH_OK", nativeDir, abiLibsPath, binDir);
+        if (bashDirect.exists()) {
+            shellSelfTest(bashDirect, "bash-echo-direct", "echo DSH_BASH_OK", nativeDir, abiLibsPath, binDir);
+        }
+        shellSelfTest(bash, "pipe-grep", "ls /system/etc | grep -c .", nativeDir, abiLibsPath, binDir);
+        shellSelfTest(bash, "sed-awk", "printf abcdef | sed s/abc/XYZ/ ; printf 'one two\\n' | awk '{print $2}'", nativeDir, abiLibsPath, binDir);
+    }
+
+    private void shellSelfTest(File bash, String name, String command, String nativeDir, String abiLibsPath, File binDir) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    bash.getAbsolutePath(), "-c", command);
+            pb.redirectErrorStream(true);
+            Map<String, String> env = pb.environment();
+            env.put("LD_LIBRARY_PATH", binDir.getAbsolutePath() + ":" + nativeDir + ":"
+                    + abiLibsPath + ":/system/lib64:/system/lib:/system/xbin64");
+            env.put("TMPDIR", new File(binDir.getParentFile(), "tmp").getAbsolutePath());
+            env.put("PATH", binDir.getAbsolutePath() + ":" + nativeDir + ":/system/bin:/system/xbin");
+            Process p = pb.start();
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream()));
+            StringBuilder out = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (out.length() < 300) {
+                    if (out.length() > 0) out.append(" | ");
+                    out.append(line);
+                }
             }
-            return bos.toByteArray();
-        } catch (IOException e) {
-            return null;
+            int exit = p.waitFor();
+            if (exit == 0) {
+                Log.i(TAG_SHELL, "SHELL-SELFTEST-OK " + name + " -> " + out);
+            } else {
+                Log.i(TAG_SHELL, "SHELL-SELFTEST-FAIL " + name + " exit=" + exit + " -> " + out);
+            }
+        } catch (Exception e) {
+            Log.i(TAG_SHELL, "SHELL-SELFTEST-FAIL " + name + " -> " + e.getMessage());
         }
     }
 
@@ -366,6 +429,47 @@ public class DshService extends Service {
             Log.i(TAG_NODE, "weburl.txt written: " + url);
         } catch (IOException e) {
             Log.e(TAG_NODE, "write weburl.txt failed", e);
+        }
+    }
+
+    private File ensureCaBundle() {
+        File bundle = new File(getFilesDir(), CA_BUNDLE_NAME);
+        if (bundle.exists() && bundle.length() > 0) {
+            return bundle;
+        }
+        File[] certs = new File(SYSTEM_CA_DIR).listFiles();
+        if (certs == null || certs.length == 0) {
+            Log.w(TAG, "no system CA certs at " + SYSTEM_CA_DIR);
+            return null;
+        }
+        Arrays.sort(certs);
+        try (FileOutputStream fos = new FileOutputStream(bundle)) {
+            byte[] newline = "\n".getBytes();
+            for (File cert : certs) {
+                byte[] pem = readAllBytes(cert);
+                if (pem == null || pem.length == 0) continue;
+                fos.write(pem);
+                fos.write(newline);
+            }
+            Log.i(TAG, "CA bundle built: " + certs.length + " certs -> " + bundle.getAbsolutePath());
+            return bundle;
+        } catch (IOException e) {
+            Log.e(TAG, "CA bundle build failed", e);
+            return null;
+        }
+    }
+
+    private byte[] readAllBytes(File file) {
+        try (InputStream in = new FileInputStream(file);
+             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                bos.write(buf, 0, n);
+            }
+            return bos.toByteArray();
+        } catch (IOException e) {
+            return null;
         }
     }
 
