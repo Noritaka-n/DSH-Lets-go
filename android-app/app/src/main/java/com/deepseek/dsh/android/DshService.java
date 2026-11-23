@@ -197,8 +197,20 @@ public class DshService extends Service {
             cmd.add("3080");
 
             String filesDir = getFilesDir().getAbsolutePath();
-            ensureDir(new File(filesDir, "workspace"));
             ensureDir(new File(filesDir, "logs"));
+            File workspacesRoot = new File(filesDir, "DSH-workspaces");
+            ensureDir(workspacesRoot);
+            File legacyWorkspace = new File(filesDir, "workspace");
+            File migratedWorkspace = new File(workspacesRoot, "workspace");
+            if (legacyWorkspace.isDirectory() && !migratedWorkspace.exists()) {
+                try {
+                    java.nio.file.Files.move(legacyWorkspace.toPath(), migratedWorkspace.toPath(),
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                    Log.i(TAG, "legacy workspace migrated to " + migratedWorkspace.getAbsolutePath());
+                } catch (IOException e) {
+                    Log.w(TAG, "legacy workspace migration failed: " + e.getMessage());
+                }
+            }
 
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
@@ -206,7 +218,8 @@ public class DshService extends Service {
             env.put("LD_LIBRARY_PATH", abiLibs.getAbsolutePath() + ":" + nativeDir);
             env.put("HOME", filesDir);
             env.put("DSH_HOME", dshHomeDir.getAbsolutePath());
-            env.put("DSH_WORKSPACE", filesDir + "/workspace");
+            env.put("DSH_WORKSPACE", workspacesRoot.getAbsolutePath());
+            env.put("DSH_WORKSPACES_ROOT", workspacesRoot.getAbsolutePath());
             env.put("NODE_PATH", nodeModules.getAbsolutePath());
             env.put("DSH_NODE_BIN", nodeBin.getAbsolutePath());
             env.put("DSH_PNPM_JS", filesDir + "/runtime/dsh/pnpm/pnpm.js");
@@ -224,7 +237,7 @@ public class DshService extends Service {
             Log.i(TAG_NODE, "env: PATH=" + env.get("PATH") + " TMPDIR=" + env.get("TMPDIR")
                     + " LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH")
                     + " HOME=" + filesDir + " DSH_HOME=" + dshHomeDir
-                    + " DSH_WORKSPACE=" + filesDir + "/workspace"
+                    + " DSH_WORKSPACE=" + workspacesRoot
                     + " NODE_PATH=" + nodeModules);
 
             nodeProcess = pb.start();
