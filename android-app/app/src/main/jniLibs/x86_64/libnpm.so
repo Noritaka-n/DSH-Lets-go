@@ -1,0 +1,6 @@
+#!/system/bin/sh
+self=$(readlink -f "$0" 2>/dev/null) || self="$0"
+dir=$(dirname "$self")
+node_bin="${DSH_NODE_BIN:-$dir/libnodeexec.so}"
+npm_js="${DSH_NPM_JS:-/data/user/0/com.deepseek.dsh.android/files/runtime/dsh/pnpm/npm.js}"
+exec "$node_bin" -e "process.argv=[process.argv[0],'$npm_js'].concat(process.argv.slice(1));require('$npm_js')" -- "$@"

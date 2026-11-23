@@ -121,7 +121,8 @@ public class DshService extends Service {
             File runtimeRoot = new File(getFilesDir(), "runtime");
             File nodeModules = new File(runtimeRoot, "dsh/node_modules");
 
-            if (!nodeModules.exists()) {
+            if (!nodeModules.exists()
+                    || !new File(runtimeRoot, "dsh/pnpm/pnpm.js").exists()) {
                 try {
                     unzipAsset(RUNTIME_ASSET, runtimeRoot);
                 } catch (IOException e) {
@@ -207,6 +208,9 @@ public class DshService extends Service {
             env.put("DSH_HOME", dshHomeDir.getAbsolutePath());
             env.put("DSH_WORKSPACE", filesDir + "/workspace");
             env.put("NODE_PATH", nodeModules.getAbsolutePath());
+            env.put("DSH_NODE_BIN", nodeBin.getAbsolutePath());
+            env.put("DSH_PNPM_JS", filesDir + "/runtime/dsh/pnpm/pnpm.js");
+            env.put("DSH_NPM_JS", filesDir + "/runtime/dsh/pnpm/npm.js");
             env.put("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY);
             env.put("W_API_KEY", W_API_KEY);
             env.put("TMPDIR", filesDir + "/tmp");
@@ -254,8 +258,10 @@ public class DshService extends Service {
     private int prepareShellTools(String abi, String nativeDir, File binDir) throws IOException, ErrnoException {
         File shellRoot = new File(getFilesDir(), "shell");
         File symlinksFile = new File(shellRoot, abi + "/symlinks.txt");
-        if (!symlinksFile.exists()) {
+        try {
             unzipAsset(SHELL_ASSET, shellRoot);
+        } catch (IOException e) {
+            Log.w(TAG_SHELL, "shell manifest refresh failed", e);
         }
         if (!symlinksFile.exists()) {
             Log.w(TAG_SHELL, "symlinks manifest missing for " + abi);
