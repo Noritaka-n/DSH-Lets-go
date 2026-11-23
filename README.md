@@ -42,8 +42,8 @@ gradle assembleDebug --no-daemon   # 需要 JDK 21 与 Android SDK (platform 35)
 
 ## 已知限制（当前版本）
 
-- 命令执行类工具暂不可用（bash 工具链正在适配中）
 - 部分桌面功能暂未提供：Office 文档处理、语音输入、交互终端面板
+- 插件安装正在适配中
 - debug 签名包，正式签名版后续提供
 
 ## 许可证
