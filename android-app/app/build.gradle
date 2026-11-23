@@ -10,10 +10,12 @@ android {
         applicationId 'com.deepseek.dsh.android'
         minSdk 29
         targetSdk 35
-        versionCode 5
-        versionName '0.1.4-v5'
+        versionCode 9
+        versionName '0.1.5a1'
     }
 
+    // Extract native libs to the filesystem (nativeLibraryDir) so the node
+    // binary can be exec'd via ProcessBuilder. AGP 8.x DSL:
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -31,3 +33,5 @@ android {
         }
     }
 }
+
+// Pure framework APIs only; no AndroidX, no Kotlin.
