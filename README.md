@@ -1,47 +1,56 @@
 # DSH-Let's go
 
-**DeepSeek Harness（0.2.2-rc.5）的原生 Android 移植**：APK 内嵌 Android 原生 Node.js 24.22.3（Termux bionic 构建），执行完整的 DSH 插件体系，WebView 承载官方 Web UI，全程在设备本地运行。不依赖 PC、不依赖 Termux、不依赖云容器。
+在 Android 手机上原生运行的 DeepSeek——开源 AI 助手 [DeepSeek](https://github.com/deepseek-ai/deepseek-harness) 的移动版。助手引擎完整运行在你的手机本地：对话、文件、任务都在设备上处理。
 
-> EN: A native Android port of DeepSeek Harness (MIT). The APK embeds a bionic-built Node.js 24.22.3 runtime, boots `dsh --profile android` fully on-device, and serves the official Web UI in a WebView.
+> DSH-Let's go runs the open-source DeepSeek Harness (MIT) natively on your Android phone, fully on-device.
 
-## 声明：基于官方修改版本
+## 特性
 
-本项目是基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT License，**Copyright (c) 2026 DeepSeek**）的**修改版本**。原始许可证全文见 [LICENSE-DeepSeek-Harness.txt](LICENSE-DeepSeek-Harness.txt)（一字未改）。上游基线 `0.2.2-rc.5`。
+- **完全本地运行**：引擎（Node.js + DeepSeek 运行时）内嵌于 APK，会话与文件都保存在你手机的应用私有目录中
+- **自带钥匙**：不内置任何账号或 API Key——启动后在应用内登录你的 DeepSeek 账号或填入自己的 API Key，凭据只存在你的手机上
+- **官方界面**：与桌面版一致的完整 Web UI，本地服务 + 沉浸式全屏显示
+- **后台常驻**：前台服务保活，切出应用再回来不重载；内置电池优化白名单与主流国产 ROM（小米/OPPO/vivo/华为/三星）自启动设置的直达入口
+- **双架构通用**：一个 APK 同时支持 arm64-v8a（主流手机）与 x86_64（模拟器）
 
-本仓库的适配（修改）内容：
+## 系统要求
 
-1. **Android 原生运行时集成**：Termux 构建的 Node.js 24.22.3 嵌入 APK（jniLibs + ProcessBuilder 启动，无 NDK），并修补 Android 平台的 TLS 信任链、flock、SELinux 硬链接、时区等运行时差异
-2. **Android 应用壳**：Java 前台服务 + 沉浸式 WebView 承载官方 Web UI，token 自动认证与运行时解压
-3. **移动端 profile 裁剪**：基于 DSH 自身的 patch 机制禁用桌面专属组件，新增 `--profile android`
-4. **凭证模型**：零内置凭证，用户在应用内 Sign in（账号授权）或 Add API Key（自带密钥），凭据仅存于设备应用私有目录
+- Android 10 或更高
+- arm64-v8a 或 x86_64 设备，建议内存 4GB 以上
 
-## 构建与运行
+## 安装
 
-运行时载荷已随仓库附带（`android-app/app/src/main/assets/` 与 `jniLibs/` 下的 zip 与 .so），克隆后直接编译：
+1. 从 [Releases](../../releases) 下载 `DSH Let's go.apk` 并安装（需允许「安装未知应用」）
+2. 首次启动约 10 秒：应用正在把运行时解压到私有目录，之后启动都是秒开
+3. 首次使用会引导：通知权限 → 电池优化白名单 → 登录或填入 API Key
+
+### 从源码构建
+
+运行时与引擎二进制已随仓库附带，克隆后无需额外准备：
 
 ```bash
 cd android-app
-gradle assembleDebug --no-daemon   # JAVA_HOME 指向 JDK 21；Android SDK platform 35
-# 产物 app/build/outputs/apk/debug/app-debug.apk（双架构 universal）
+gradle assembleDebug --no-daemon   # 需要 JDK 21 与 Android SDK (platform 35)
+# 产物 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-- 载荷均为构建产物：DSH 0.2.2-rc.5 运行时闭包（含 Android 修补）、Node 24.22.3 双架构二进制（Termux 构建）、依赖库、android profile
-- APK 首次启动约 10 秒解压属正常；无内置凭证，启动后在应用内 Sign in 或 Add API Key
+## 使用提示
 
-## 已知限制（移动端 profile 已裁剪）
+- **保持后台**：建议在系统设置中将电池策略设为「不限制」并允许自启动（等待页的「后台保活设置」按钮会带你直达对应开关）
+- 切出应用再回来不重载；即使进程被系统清理，重新打开也会自动恢复引擎与界面
+- 会话历史保存在本地，升级或重装后清除应用数据会一并清除
 
-- bash/子进程类工具链暂不可用（Android 无 bash）
-- 交互终端面板、插件安装（设备端无 pnpm）暂不可用
-- workspace 仅应用私有目录（SAF 真实存储桥未实现）
-- Office 处理与语音输入已禁用
-- debug 签名；前台服务在 Android 15 有每日运行配额
+## 已知限制（当前版本）
+
+- 命令执行类工具暂不可用（bash 工具链正在适配中）
+- 部分桌面功能暂未提供：Office 文档处理、语音输入、交互终端面板
+- debug 签名包，正式签名版后续提供
 
 ## 许可证
 
-| 文件 | 覆盖 |
+| 内容 | 许可证 |
 |---|---|
-| [LICENSE](LICENSE) | 本仓库的移植壳代码（Apache License 2.0） |
-| [LICENSE-DeepSeek-Harness.txt](LICENSE-DeepSeek-Harness.txt) | DeepSeek Harness 运行时（MIT，Copyright (c) 2026 DeepSeek，APK 分发时原文另随 `@deepseek-ai/*` 各包附带） |
-| `nodejs-lts-copyright.txt`、`libc++-LICENSE-NCSA.txt` 等 7 份（仓库根目录） | Node.js 24.22.3 及捆绑依赖库（MIT/ICU/Apache-2.0/NCSA/zlib/公有领域） |
+| 本仓库的移植壳代码 | [Apache License 2.0](LICENSE) |
+| 内含的 DeepSeek 运行时 | **MIT License，Copyright (c) 2026 DeepSeek**（全文见 [LICENSE-DeepSeek-Harness.txt](LICENSE-DeepSeek-Harness.txt)，APK 分发时随包附带） |
+| Node.js 24.22.3 与依赖库 | MIT / ICU / Apache-2.0 / NCSA / zlib / 公有领域（声明见仓库根目录各文件） |
 
-上游 DSH 处于开发者预览期，API 可能存在破坏性变更；本移植基线为 `0.2.2-rc.5`。
+DeepSeek Harness 处于开发者预览期，功能与界面可能随上游更新变化。
