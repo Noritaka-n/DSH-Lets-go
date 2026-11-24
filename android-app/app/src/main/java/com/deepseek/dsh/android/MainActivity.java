@@ -13,6 +13,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,6 +26,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.util.Log;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -44,8 +46,13 @@ public class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private LinearLayout rootLayout;
+    private LinearLayout settingsLayout;
     private TextView statusView;
+    private TextView settingsStatusView;
     private Button keepAliveButton;
+    private Button apiKeyButton;
+    private Button saveApiKeyButton;
+    private EditText apiKeyInput;
     private WebView webView;
     private volatile boolean pageLoaded = false;
     private volatile String loadedUrl = null;
@@ -101,6 +108,13 @@ public class MainActivity extends Activity {
         rootLayout.addView(statusView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
+        apiKeyButton = new Button(this);
+        apiKeyButton.setText("API Key 设置");
+        apiKeyButton.setOnClickListener(v -> showApiKeySettings());
+        apiKeyButton.setVisibility(View.VISIBLE);
+        rootLayout.addView(apiKeyButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         keepAliveButton = new Button(this);
         keepAliveButton.setText("后台保活设置（允许自启动 + 电池不限制）");
         keepAliveButton.setOnClickListener(v -> openOemAutoStartSettings());
@@ -109,6 +123,58 @@ public class MainActivity extends Activity {
         keepAliveButton.setPadding(pad, pad / 2, pad, pad / 2);
         rootLayout.addView(keepAliveButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        settingsLayout = new LinearLayout(this);
+        settingsLayout.setOrientation(LinearLayout.VERTICAL);
+        settingsLayout.setGravity(Gravity.CENTER_HORIZONTAL);
+        settingsLayout.setBackgroundColor(Color.WHITE);
+        settingsLayout.setPadding(pad * 2, pad * 3, pad * 2, pad * 2);
+        settingsLayout.setVisibility(View.GONE);
+
+        TextView settingsTitle = new TextView(this);
+        settingsTitle.setText("API Key 设置");
+        settingsTitle.setTextSize(24f);
+        settingsTitle.setTextColor(Color.BLACK);
+        settingsTitle.setGravity(Gravity.CENTER);
+        settingsLayout.addView(settingsTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        apiKeyInput = new EditText(this);
+        apiKeyInput.setHint("输入 DeepSeek API Key");
+        apiKeyInput.setTextColor(Color.BLACK);
+        apiKeyInput.setHintTextColor(Color.GRAY);
+        apiKeyInput.setSingleLine(true);
+        apiKeyInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        inputParams.setMargins(0, pad * 2, 0, 0);
+        settingsLayout.addView(apiKeyInput, inputParams);
+
+        settingsStatusView = new TextView(this);
+        settingsStatusView.setText("密钥由 Android Keystore 加密，仅保存在本机");
+        settingsStatusView.setTextSize(15f);
+        settingsStatusView.setTextColor(Color.DKGRAY);
+        settingsStatusView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams settingsStatusParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        settingsStatusParams.setMargins(0, pad, 0, pad);
+        settingsLayout.addView(settingsStatusView, settingsStatusParams);
+
+        saveApiKeyButton = new Button(this);
+        saveApiKeyButton.setText("保存 API Key 并启动");
+        saveApiKeyButton.setOnClickListener(v -> saveApiKeyAndStart());
+        settingsLayout.addView(saveApiKeyButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button settingsKeepAliveButton = new Button(this);
+        settingsKeepAliveButton.setText("后台保活设置");
+        settingsKeepAliveButton.setOnClickListener(v -> openOemAutoStartSettings());
+        settingsLayout.addView(settingsKeepAliveButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        rootLayout.addView(settingsLayout, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         webView = new WebView(this);
         webView.getSettings().setJavaScriptEnabled(true);
@@ -165,13 +231,12 @@ public class MainActivity extends Activity {
         setContentView(rootLayout);
         applyImmersiveMode();
 
-        Intent service = new Intent(this, DshService.class);
-        if (Build.VERSION.SDK_INT >= 26) {
-            startForegroundService(service);
-        } else {
-            startService(service);
+        if (!hasStoredApiKey() && !hasLegacyCredentials()) {
+            showApiKeySettings();
+            return;
         }
 
+        startDshService();
         requestIgnoreBatteryOptimizationsIfNeeded();
 
         if (savedInstanceState != null && savedInstanceState.getBoolean("pageLoaded", false)) {
@@ -209,9 +274,75 @@ public class MainActivity extends Activity {
     }
 
     private void setWaiting(boolean waiting) {
+        settingsLayout.setVisibility(View.GONE);
         statusView.setVisibility(waiting ? View.VISIBLE : View.GONE);
+        apiKeyButton.setVisibility(waiting ? View.VISIBLE : View.GONE);
         keepAliveButton.setVisibility(waiting ? View.VISIBLE : View.GONE);
         webView.setVisibility(waiting ? View.GONE : View.VISIBLE);
+    }
+
+    private void showApiKeySettings() {
+        handler.removeCallbacks(urlPoller);
+        statusView.setVisibility(View.GONE);
+        apiKeyButton.setVisibility(View.GONE);
+        keepAliveButton.setVisibility(View.GONE);
+        webView.setVisibility(View.GONE);
+        settingsLayout.setVisibility(View.VISIBLE);
+        boolean hasKey = hasStoredApiKey();
+        settingsStatusView.setText(hasKey
+                ? "已使用 Android Keystore 加密保存，输入新密钥可替换"
+                : "密钥由 Android Keystore 加密，仅保存在本机");
+        saveApiKeyButton.setText(hasKey ? "保存新 API Key 并重启" : "保存 API Key 并启动");
+    }
+
+    private void saveApiKeyAndStart() {
+        String apiKey = apiKeyInput.getText().toString().trim();
+        if (apiKey.isEmpty()) {
+            settingsStatusView.setText("请输入 API Key");
+            return;
+        }
+        saveApiKeyButton.setEnabled(false);
+        try {
+            new CredentialStore(this).saveApiKey(apiKey);
+            apiKeyInput.setText("");
+            pageLoaded = false;
+            loadedUrl = null;
+            setWaiting(true);
+            statusView.setText("API Key 已加密保存\n\n正在启动本地 web 运行时…");
+            stopService(new Intent(this, DshService.class));
+            startDshService();
+            requestIgnoreBatteryOptimizationsIfNeeded();
+            handler.removeCallbacks(urlPoller);
+            handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
+        } catch (Exception e) {
+            Log.w("DshMain", "API key save failed", e);
+            settingsStatusView.setText("保存失败：" + e.getClass().getSimpleName());
+        } finally {
+            saveApiKeyButton.setEnabled(true);
+        }
+    }
+
+    private boolean hasStoredApiKey() {
+        try {
+            String value = new CredentialStore(this).getApiKey();
+            return value != null && !value.isEmpty();
+        } catch (Exception e) {
+            Log.w("DshMain", "Keystore credential read failed", e);
+            return false;
+        }
+    }
+
+    private boolean hasLegacyCredentials() {
+        return new File(getFilesDir(), "dsh-home/.credentials.yaml").isFile();
+    }
+
+    private void startDshService() {
+        Intent service = new Intent(this, DshService.class);
+        if (Build.VERSION.SDK_INT >= 26) {
+            startForegroundService(service);
+        } else {
+            startService(service);
+        }
     }
 
     @Override
@@ -382,7 +513,12 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) {
+        if (settingsLayout.getVisibility() == View.VISIBLE
+                && (hasStoredApiKey() || hasLegacyCredentials())) {
+            setWaiting(true);
+            startDshService();
+            handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
+        } else if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) {
             webView.goBack();
         } else {
             super.onBackPressed();

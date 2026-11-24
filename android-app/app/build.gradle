@@ -10,8 +10,8 @@ android {
         applicationId 'com.deepseek.dsh.android'
         minSdk 29
         targetSdk 35
-        versionCode 11
-        versionName '0.1.5a3'
+        versionCode 12
+        versionName '0.1.5a4'
     }
 
     // Extract native libs to the filesystem (nativeLibraryDir) so the node
@@ -25,6 +25,10 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {

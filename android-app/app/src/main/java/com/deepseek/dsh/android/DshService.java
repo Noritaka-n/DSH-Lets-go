@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -124,6 +125,15 @@ public class DshService extends Service {
 
     private void runNodeLoop() {
         try {
+            File dshHomeDir = new File(getFilesDir(), "dsh-home");
+            String apiKey = resolveApiKey(dshHomeDir);
+            if (apiKey == null) {
+                Log.i(TAG, "no API key available; waiting for user setup");
+                notifyState("需要 API Key", "请打开 DSH 并在 API Key 设置中保存密钥");
+                workerBusy.set(false);
+                stopSelf();
+                return;
+            }
             String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "x86_64";
             File runtimeRoot = new File(getFilesDir(), "runtime");
             File nodeModules = new File(runtimeRoot, "dsh/node_modules");
@@ -157,7 +167,6 @@ public class DshService extends Service {
                 Log.i(TAG, "native libs already extracted at " + abiLibs);
             }
 
-            File dshHomeDir = new File(getFilesDir(), "dsh-home");
             if (!new File(dshHomeDir, "profiles/android/cordis.patch.yml").exists()) {
                 try {
                     unzipAsset(DSH_HOME_ASSET, dshHomeDir);
@@ -230,6 +239,9 @@ public class DshService extends Service {
             env.put("DSH_NODE_BIN", nodeBin.getAbsolutePath());
             env.put("DSH_PNPM_JS", filesDir + "/runtime/dsh/pnpm/pnpm.js");
             env.put("DSH_NPM_JS", filesDir + "/runtime/dsh/pnpm/npm.js");
+            env.put("DEEPSEEK_API_KEY", apiKey);
+            env.put("W_API_KEY", apiKey);
+            Log.i(TAG, "API key injected from Android Keystore; length=" + apiKey.length());
 
             env.put("TMPDIR", filesDir + "/tmp");
             env.put("PATH", binDir.getAbsolutePath() + ":" + nativeDir + ":"
@@ -271,6 +283,98 @@ public class DshService extends Service {
             workerBusy.set(false);
             scheduleRestart(-1);
         }
+    }
+
+    private String resolveApiKey(File dshHomeDir) throws Exception {
+        CredentialStore store = new CredentialStore(this);
+        File legacyFile = new File(dshHomeDir, ".credentials.yaml");
+        String apiKey = store.getApiKey();
+        if (apiKey != null && !apiKey.isEmpty()) {
+            Log.i(TAG, "API key loaded from Android Keystore");
+            return apiKey;
+        }
+        if (!legacyFile.isFile()) {
+            return null;
+        }
+        String migrated = readLegacyApiKey(legacyFile);
+        if (migrated == null || migrated.isEmpty()) {
+            Log.w(TAG, "legacy credentials contain no supported API key reference");
+            return null;
+        }
+        store.saveApiKey(migrated);
+        String verified = store.getApiKey();
+        if (!migrated.equals(verified)) {
+            throw new IOException("Encrypted credential verification failed");
+        }
+        if (legacyFile.exists() && !legacyFile.delete()) {
+            throw new IOException("Legacy plaintext credential deletion failed");
+        }
+        Log.i(TAG, "legacy API key migrated to Android Keystore; plaintext removed");
+        return verified;
+    }
+
+    private String readLegacyApiKey(File file) throws IOException {
+        String deepseekKey = null;
+        String gatewayKey = null;
+        boolean insideRefs = false;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(file), StandardCharsets.UTF_8))) {
+            String rawLine;
+            while ((rawLine = reader.readLine()) != null) {
+                String line = rawLine.replace("\uFEFF", "");
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                int indent = 0;
+                while (indent < line.length()) {
+                    char c = line.charAt(indent);
+                    if (c != ' ' && c != '\t') {
+                        break;
+                    }
+                    indent++;
+                }
+                if (indent == 0) {
+                    insideRefs = trimmed.equals("refs:");
+                }
+                if (indent > 0 && !insideRefs) {
+                    continue;
+                }
+                int colon = trimmed.indexOf(':');
+                if (colon <= 0) {
+                    continue;
+                }
+                String name = trimmed.substring(0, colon).trim();
+                if (!name.equals("DEEPSEEK_API_KEY") && !name.equals("W_API_KEY")) {
+                    continue;
+                }
+                String value = parseLegacyScalar(trimmed.substring(colon + 1));
+                if (value == null || value.isEmpty()) {
+                    continue;
+                }
+                if (name.equals("DEEPSEEK_API_KEY")) {
+                    deepseekKey = value;
+                } else {
+                    gatewayKey = value;
+                }
+            }
+        }
+        return deepseekKey != null ? deepseekKey : gatewayKey;
+    }
+
+    private String parseLegacyScalar(String raw) {
+        String value = raw.trim();
+        if (value.startsWith("'") && value.lastIndexOf('\'') > 0) {
+            return value.substring(1, value.lastIndexOf('\'')).replace("''", "'");
+        }
+        if (value.startsWith("\"") && value.lastIndexOf('\"') > 0) {
+            return value.substring(1, value.lastIndexOf('\"'));
+        }
+        int comment = value.indexOf(" #");
+        if (comment >= 0) {
+            value = value.substring(0, comment).trim();
+        }
+        return value;
     }
 
     private int prepareShellTools(String abi, String nativeDir, File binDir) throws IOException, ErrnoException {
