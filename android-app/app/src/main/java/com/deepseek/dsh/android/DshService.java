@@ -137,9 +137,13 @@ public class DshService extends Service {
             String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "x86_64";
             File runtimeRoot = new File(getFilesDir(), "runtime");
             File nodeModules = new File(runtimeRoot, "dsh/node_modules");
+            String ptyArch = "arm64-v8a".equals(abi) ? "arm64" : "x64";
+            File ptyPrebuild = new File(nodeModules,
+                    "node-pty/prebuilds/android-" + ptyArch + "/pty.node");
 
             if (!nodeModules.exists()
-                    || !new File(runtimeRoot, "dsh/pnpm/pnpm.js").exists()) {
+                    || !new File(runtimeRoot, "dsh/pnpm/pnpm.js").exists()
+                    || !ptyPrebuild.isFile()) {
                 try {
                     unzipAsset(RUNTIME_ASSET, runtimeRoot);
                 } catch (IOException e) {
@@ -167,9 +171,18 @@ public class DshService extends Service {
                 Log.i(TAG, "native libs already extracted at " + abiLibs);
             }
 
-            if (!new File(dshHomeDir, "profiles/android/cordis.patch.yml").exists()) {
+            File androidProfilePatch = new File(dshHomeDir, "profiles/android/cordis.patch.yml");
+            byte[] profileBytes = androidProfilePatch.isFile() ? readAllBytes(androidProfilePatch) : null;
+            String profileText = profileBytes == null ? "" : new String(profileBytes, StandardCharsets.UTF_8);
+            boolean ptyProfileReady = profileText.contains("- id: persistent-shell")
+                    && profileText.contains("- id: terminal-controller");
+            if (!ptyProfileReady) {
                 try {
-                    unzipAsset(DSH_HOME_ASSET, dshHomeDir);
+                    if (androidProfilePatch.isFile()) {
+                        unzipAsset(DSH_HOME_ASSET, dshHomeDir, "profiles/android/cordis.patch.yml");
+                    } else {
+                        unzipAsset(DSH_HOME_ASSET, dshHomeDir);
+                    }
                 } catch (IOException e) {
                     Log.e(TAG, "dsh-home extraction failed", e);
                     notifyState("dsh-home 解压失败", String.valueOf(e.getMessage()));
@@ -418,7 +431,17 @@ public class DshService extends Service {
                     link.setExecutable(true, false);
                     created++;
                 } catch (ErrnoException e) {
-                    Log.w(TAG_SHELL, "symlink failed for " + tool + ": " + e.getMessage());
+                    try {
+                        if (link.delete()) {
+                            Os.symlink(target.getAbsolutePath(), link.getAbsolutePath());
+                            link.setExecutable(true, false);
+                            created++;
+                        } else {
+                            Log.w(TAG_SHELL, "symlink replacement failed for " + tool);
+                        }
+                    } catch (ErrnoException retry) {
+                        Log.w(TAG_SHELL, "symlink failed for " + tool + ": " + retry.getMessage());
+                    }
                 }
             }
         }
@@ -494,7 +517,12 @@ public class DshService extends Service {
     }
 
     private void unzipAsset(String assetPath, File targetDir) throws IOException {
-        Log.i(TAG, "extracting " + assetPath + " -> " + targetDir.getAbsolutePath());
+        unzipAsset(assetPath, targetDir, null);
+    }
+
+    private void unzipAsset(String assetPath, File targetDir, String onlyEntry) throws IOException {
+        Log.i(TAG, "extracting " + assetPath + " -> " + targetDir.getAbsolutePath()
+                + (onlyEntry == null ? "" : " entry " + onlyEntry));
         if (!targetDir.exists() && !targetDir.mkdirs()) {
             throw new IOException("cannot create " + targetDir);
         }
@@ -507,6 +535,9 @@ public class DshService extends Service {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 String name = entry.getName().replace('\\', '/');
+                if (onlyEntry != null && !onlyEntry.equals(name)) {
+                    continue;
+                }
                 File outFile = new File(targetDir, name);
                 String canonical = outFile.getCanonicalPath();
                 if (!canonical.equals(targetCanonical)
