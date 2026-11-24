@@ -226,17 +226,33 @@ public class DshService extends Service {
 
             String filesDir = getFilesDir().getAbsolutePath();
             ensureDir(new File(filesDir, "logs"));
-            File workspacesRoot = new File(filesDir, "DSH-workspaces");
-            ensureDir(workspacesRoot);
-            File legacyWorkspace = new File(filesDir, "workspace");
-            File migratedWorkspace = new File(workspacesRoot, "workspace");
-            if (legacyWorkspace.isDirectory() && !migratedWorkspace.exists()) {
+            File workspacesRoot;
+            SafStore safStore = new SafStore(this);
+            if (safStore.getWorkspaceRoot() != null) {
                 try {
-                    java.nio.file.Files.move(legacyWorkspace.toPath(), migratedWorkspace.toPath(),
-                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-                    Log.i(TAG, "legacy workspace migrated to " + migratedWorkspace.getAbsolutePath());
-                } catch (IOException e) {
-                    Log.w(TAG, "legacy workspace migration failed: " + e.getMessage());
+                    String selectedRoot = safStore.verifySelection();
+                    workspacesRoot = new File(selectedRoot);
+                    Log.i(TAG, "SAF workspace root verified: " + selectedRoot);
+                } catch (Exception e) {
+                    Log.e(TAG, "SAF workspace verification failed", e);
+                    notifyState("存储位置不可写", "请重新选择存储位置并允许文件管理权限");
+                    workerBusy.set(false);
+                    stopSelf();
+                    return;
+                }
+            } else {
+                workspacesRoot = new File(filesDir, "DSH-workspaces");
+                ensureDir(workspacesRoot);
+                File legacyWorkspace = new File(filesDir, "workspace");
+                File migratedWorkspace = new File(workspacesRoot, "workspace");
+                if (legacyWorkspace.isDirectory() && !migratedWorkspace.exists()) {
+                    try {
+                        java.nio.file.Files.move(legacyWorkspace.toPath(), migratedWorkspace.toPath(),
+                                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                        Log.i(TAG, "legacy workspace migrated to " + migratedWorkspace.getAbsolutePath());
+                    } catch (IOException e) {
+                        Log.w(TAG, "legacy workspace migration failed: " + e.getMessage());
+                    }
                 }
             }
 

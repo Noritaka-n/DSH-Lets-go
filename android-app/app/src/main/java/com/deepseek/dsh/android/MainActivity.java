@@ -9,6 +9,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -41,6 +42,8 @@ public class MainActivity extends Activity {
 
     private static final long POLL_INTERVAL_MS = 2000;
     private static final int REQUEST_POST_NOTIFICATIONS = 1;
+    private static final int REQUEST_STORAGE_TREE = 2;
+    private static final int REQUEST_STORAGE_PERMISSIONS = 3;
     private static final int WEB_PORT = 3080;
     private static final String WEB_BASE_FILE = "webbase.txt";
 
@@ -52,8 +55,11 @@ public class MainActivity extends Activity {
     private Button keepAliveButton;
     private Button apiKeyButton;
     private Button saveApiKeyButton;
+    private Button storageButton;
+    private Button settingsStorageButton;
     private EditText apiKeyInput;
     private WebView webView;
+    private boolean awaitingStoragePermission;
     private volatile boolean pageLoaded = false;
     private volatile String loadedUrl = null;
 
@@ -115,6 +121,11 @@ public class MainActivity extends Activity {
         rootLayout.addView(apiKeyButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        storageButton = new Button(this);
+        storageButton.setOnClickListener(v -> openStorageTreePicker());
+        rootLayout.addView(storageButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         keepAliveButton = new Button(this);
         keepAliveButton.setText("后台保活设置（允许自启动 + 电池不限制）");
         keepAliveButton.setOnClickListener(v -> openOemAutoStartSettings());
@@ -165,6 +176,11 @@ public class MainActivity extends Activity {
         saveApiKeyButton.setText("保存 API Key 并启动");
         saveApiKeyButton.setOnClickListener(v -> saveApiKeyAndStart());
         settingsLayout.addView(saveApiKeyButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        settingsStorageButton = new Button(this);
+        settingsStorageButton.setOnClickListener(v -> openStorageTreePicker());
+        settingsLayout.addView(settingsStorageButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button settingsKeepAliveButton = new Button(this);
@@ -229,6 +245,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         setContentView(rootLayout);
+        updateStorageButtons();
         applyImmersiveMode();
 
         if (!hasStoredApiKey() && !hasLegacyCredentials()) {
@@ -277,6 +294,7 @@ public class MainActivity extends Activity {
         settingsLayout.setVisibility(View.GONE);
         statusView.setVisibility(waiting ? View.VISIBLE : View.GONE);
         apiKeyButton.setVisibility(waiting ? View.VISIBLE : View.GONE);
+        storageButton.setVisibility(View.VISIBLE);
         keepAliveButton.setVisibility(waiting ? View.VISIBLE : View.GONE);
         webView.setVisibility(waiting ? View.GONE : View.VISIBLE);
     }
@@ -285,6 +303,7 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(urlPoller);
         statusView.setVisibility(View.GONE);
         apiKeyButton.setVisibility(View.GONE);
+        storageButton.setVisibility(View.GONE);
         keepAliveButton.setVisibility(View.GONE);
         webView.setVisibility(View.GONE);
         settingsLayout.setVisibility(View.VISIBLE);
@@ -342,6 +361,142 @@ public class MainActivity extends Activity {
             startForegroundService(service);
         } else {
             startService(service);
+        }
+    }
+
+    private void openStorageTreePicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, REQUEST_STORAGE_TREE);
+    }
+
+    private void ensureStorageAccessAndRestart() {
+        if (new SafStore(this).getWorkspaceRoot() == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+            awaitingStoragePermission = true;
+            showStorageStatus("存储位置已保存\n\n请在系统设置中允许 DSH 管理所有文件，供 node 使用直接路径读写");
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                Log.w("DshMain", "package all-files settings unavailable; trying global page", e);
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                } catch (Exception fallback) {
+                    Log.w("DshMain", "global all-files settings unavailable", fallback);
+                    showStorageStatus("请在应用详情中允许 DSH 管理所有文件，然后返回应用");
+                }
+            }
+            return;
+        }
+        if (Build.VERSION.SDK_INT == 29 && !hasRawStorageAccess()) {
+            awaitingStoragePermission = true;
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE_PERMISSIONS);
+            return;
+        }
+        applyStorageSelection();
+    }
+
+    private void applyStorageSelection() {
+        try {
+            String path = new SafStore(this).verifySelection();
+            awaitingStoragePermission = false;
+            updateStorageButtons();
+            if (hasStoredApiKey() || hasLegacyCredentials()) {
+                pageLoaded = false;
+                loadedUrl = null;
+                setWaiting(true);
+                statusView.setText("工作区存储位置已生效\n\n" + path + "\n\n正在重启本地运行时…");
+                stopService(new Intent(this, DshService.class));
+                startDshService();
+                handler.removeCallbacks(urlPoller);
+                handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
+            } else {
+                showApiKeySettings();
+                settingsStatusView.setText("存储位置已设置：" + path + "\n保存 API Key 后启动");
+            }
+        } catch (Exception e) {
+            Log.w("DshMain", "SAF workspace verification failed", e);
+            showStorageStatus("存储位置暂不可写\n\n" + e.getClass().getSimpleName()
+                    + "\n请重新选择目录并允许文件管理权限");
+        }
+    }
+
+    private boolean hasRawStorageAccess() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            return Environment.isExternalStorageManager();
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED
+                && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void updateStorageButtons() {
+        if (storageButton == null || settingsStorageButton == null) {
+            return;
+        }
+        SafStore store = new SafStore(this);
+        String text = store.getTreeUri() == null
+                ? "选择存储位置（默认应用私有目录）"
+                : "存储位置：" + store.getSelectionLabel();
+        storageButton.setText(text);
+        settingsStorageButton.setText(text);
+    }
+
+    private void showStorageStatus(String message) {
+        if (settingsLayout.getVisibility() == View.VISIBLE) {
+            settingsStatusView.setText(message);
+        } else {
+            statusView.setText(message);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_STORAGE_TREE || resultCode != RESULT_OK
+                || data == null || data.getData() == null) {
+            return;
+        }
+        try {
+            new SafStore(this).saveSelection(data.getData(), data.getFlags());
+            updateStorageButtons();
+            ensureStorageAccessAndRestart();
+        } catch (Exception e) {
+            Log.w("DshMain", "SAF selection failed", e);
+            showStorageStatus("存储位置保存失败：" + e.getClass().getSimpleName());
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STORAGE_PERMISSIONS) {
+            if (hasRawStorageAccess()) {
+                applyStorageSelection();
+            } else {
+                showStorageStatus("请允许外部存储读写权限后再使用所选工作区");
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        updateStorageButtons();
+        if (awaitingStoragePermission) {
+            if (hasRawStorageAccess()) {
+                applyStorageSelection();
+            } else {
+                showStorageStatus("请在系统设置中允许 DSH 管理所有文件，然后返回应用");
+            }
         }
     }
 
