@@ -10,8 +10,8 @@ android {
         applicationId 'com.deepseek.dsh.android'
         minSdk 29
         targetSdk 35
-        versionCode 16
-        versionName '0.1.5a8'
+        versionCode 17
+        versionName '0.1.6a9'
     }
 
     // Extract native libs to the filesystem (nativeLibraryDir) so the node

@@ -60,6 +60,7 @@ public class MainActivity extends Activity {
     private Button apiKeyButton;
     private Button saveApiKeyButton;
     private Button storageButton;
+    private TextView settingsEntry;
     private Button settingsStorageButton;
     private EditText apiKeyInput;
     private WebView webView;
@@ -136,23 +137,26 @@ public class MainActivity extends Activity {
         apiKeyButton = new Button(this);
         apiKeyButton.setText("API Key 设置");
         apiKeyButton.setOnClickListener(v -> showApiKeySettings());
-        apiKeyButton.setVisibility(View.VISIBLE);
-        rootLayout.addView(apiKeyButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         storageButton = new Button(this);
         storageButton.setOnClickListener(v -> openStorageTreePicker());
-        rootLayout.addView(storageButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
         keepAliveButton = new Button(this);
         keepAliveButton.setText("后台保活设置（允许自启动 + 电池不限制）");
         keepAliveButton.setOnClickListener(v -> openOemAutoStartSettings());
-        keepAliveButton.setVisibility(View.VISIBLE);
-        int pad = (int) (12 * getResources().getDisplayMetrics().density);
         keepAliveButton.setPadding(pad, pad / 2, pad, pad / 2);
-        rootLayout.addView(keepAliveButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        settingsEntry = new TextView(this);
+        settingsEntry.setText("设置");
+        settingsEntry.setTextSize(13f);
+        settingsEntry.setTextColor(Color.parseColor("#888888"));
+        settingsEntry.setGravity(Gravity.CENTER);
+        settingsEntry.setPadding(pad, pad, pad, pad * 2);
+        settingsEntry.setOnClickListener(v -> showApiKeySettings());
+        LinearLayout.LayoutParams entryParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rootLayout.addView(settingsEntry, entryParams);
 
         settingsLayout = new LinearLayout(this);
         settingsLayout.setOrientation(LinearLayout.VERTICAL);
@@ -313,9 +317,7 @@ public class MainActivity extends Activity {
     private void setWaiting(boolean waiting) {
         settingsLayout.setVisibility(View.GONE);
         statusView.setVisibility(waiting ? View.VISIBLE : View.GONE);
-        apiKeyButton.setVisibility(waiting ? View.VISIBLE : View.GONE);
-        storageButton.setVisibility(View.VISIBLE);
-        keepAliveButton.setVisibility(waiting ? View.VISIBLE : View.GONE);
+        settingsEntry.setVisibility(waiting ? View.VISIBLE : View.GONE);
         webView.setVisibility(waiting ? View.GONE : View.VISIBLE);
         if (!waiting) {
             extractionProgress.setVisibility(View.GONE);
@@ -363,6 +365,7 @@ public class MainActivity extends Activity {
         apiKeyButton.setVisibility(View.GONE);
         storageButton.setVisibility(View.GONE);
         keepAliveButton.setVisibility(View.GONE);
+        settingsEntry.setVisibility(View.GONE);
         webView.setVisibility(View.GONE);
         settingsLayout.setVisibility(View.VISIBLE);
         boolean hasKey = hasStoredApiKey();
@@ -610,11 +613,18 @@ public class MainActivity extends Activity {
     private void requestIgnoreBatteryOptimizationsIfNeeded() {
         try {
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                startActivity(new Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:" + getPackageName())));
+            if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                return;
             }
+            android.content.SharedPreferences prefs =
+                    getSharedPreferences("dsh_ui", MODE_PRIVATE);
+            if (prefs.getBoolean("battery_prompted", false)) {
+                return;
+            }
+            prefs.edit().putBoolean("battery_prompted", true).apply();
+            startActivity(new Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
         } catch (Exception e) {
             Log.w("DshMain", "battery optimization dialog unavailable", e);
         }
