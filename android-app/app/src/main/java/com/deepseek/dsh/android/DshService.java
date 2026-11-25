@@ -51,6 +51,7 @@ public class DshService extends Service {
     private static final String DSH_HOME_ASSET = "dsh-home.zip";
     private static final String SHELL_ASSET = "shell.zip";
     private static final String WEB_URL_PREFIX = "dsh web: ";
+    private static final String SCHEDULE_RUNTIME_ENTRY = "dsh/node_modules/@deepseek-ai/dsh-schedule/lib/index.js";
     private static final long RESTART_DELAY_MS = 3000;
     private static final int MAX_AUTO_RESTARTS = 5;
 
@@ -63,10 +64,12 @@ public class DshService extends Service {
     private final AtomicBoolean serviceStopping = new AtomicBoolean(false);
     private int autoRestartCount = 0;
     private Process nodeProcess;
+    private NotificationBridge notificationBridge;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        notificationBridge = new NotificationBridge(this);
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel channel = new NotificationChannel(
@@ -154,6 +157,15 @@ public class DshService extends Service {
                 }
             } else {
                 Log.i(TAG, "runtime already extracted at " + nodeModules);
+            }
+
+            try {
+                ensureScheduleEvents(runtimeRoot);
+            } catch (IOException e) {
+                Log.e(TAG, "schedule notification bridge update failed", e);
+                notifyState("通知桥更新失败", String.valueOf(e.getMessage()));
+                workerBusy.set(false);
+                return;
             }
 
             File libsRoot = new File(getFilesDir(), "libs");
@@ -294,6 +306,7 @@ public class DshService extends Service {
             String line;
             while ((line = reader.readLine()) != null) {
                 Log.i(TAG_NODE, line);
+                notificationBridge.observe(line);
                 if (line.startsWith(WEB_URL_PREFIX)) {
                     writeWebUrl(line.substring(WEB_URL_PREFIX.length()).trim());
                 }
@@ -609,6 +622,23 @@ public class DshService extends Service {
         } catch (IOException e) {
             Log.e(TAG_NODE, "write weburl.txt failed", e);
         }
+    }
+
+    private void ensureScheduleEvents(File runtimeRoot) throws IOException {
+        File scheduleEntry = new File(runtimeRoot, SCHEDULE_RUNTIME_ENTRY);
+        byte[] current = scheduleEntry.isFile() ? readAllBytes(scheduleEntry) : null;
+        if (current != null && new String(current, StandardCharsets.UTF_8)
+                .contains(NotificationBridge.EVENT_PREFIX)) {
+            Log.i(TAG, "schedule notification events already installed");
+            return;
+        }
+        unzipAsset(RUNTIME_ASSET, runtimeRoot, SCHEDULE_RUNTIME_ENTRY);
+        byte[] updated = readAllBytes(scheduleEntry);
+        if (updated == null || !new String(updated, StandardCharsets.UTF_8)
+                .contains(NotificationBridge.EVENT_PREFIX)) {
+            throw new IOException("Schedule notification event payload is missing");
+        }
+        Log.i(TAG, "schedule notification events installed");
     }
 
     private File ensureCaBundle() {

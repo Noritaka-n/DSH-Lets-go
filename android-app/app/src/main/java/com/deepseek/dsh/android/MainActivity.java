@@ -46,6 +46,9 @@ public class MainActivity extends Activity {
     private static final int REQUEST_STORAGE_PERMISSIONS = 3;
     private static final int WEB_PORT = 3080;
     private static final String WEB_BASE_FILE = "webbase.txt";
+    public static final String ACTION_OPEN_SESSION = "com.deepseek.dsh.android.OPEN_SESSION";
+    public static final String EXTRA_SESSION_ID = "dsh_session_id";
+    public static final String EXTRA_TASK_ID = "dsh_task_id";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private LinearLayout rootLayout;
@@ -62,6 +65,7 @@ public class MainActivity extends Activity {
     private boolean awaitingStoragePermission;
     private volatile boolean pageLoaded = false;
     private volatile String loadedUrl = null;
+    private volatile String pendingSessionId = null;
 
     private final Runnable urlPoller = new Runnable() {
         @Override
@@ -97,6 +101,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        captureSessionIntent(getIntent());
         requestPostNotificationsIfNeeded();
 
         rootLayout = new LinearLayout(this);
@@ -225,6 +230,7 @@ public class MainActivity extends Activity {
                             }
                             int q = url.indexOf('?');
                             writeWebBase(q > 0 ? url.substring(0, q) : url);
+                            consumePendingSession(view);
                         });
             }
 
@@ -678,6 +684,51 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        captureSessionIntent(intent);
+        if (webView != null && pageLoaded) {
+            consumePendingSession(webView);
+        }
+    }
+
+    private void captureSessionIntent(Intent intent) {
+        if (intent == null || !ACTION_OPEN_SESSION.equals(intent.getAction())) {
+            return;
+        }
+        String sessionId = intent.getStringExtra(EXTRA_SESSION_ID);
+        if (sessionId != null && !sessionId.trim().isEmpty()) {
+            pendingSessionId = sessionId.trim();
+            Log.i("DshMain", "session deep link queued: " + pendingSessionId);
+        }
+    }
+
+    private void consumePendingSession(WebView view) {
+        final String sessionId = pendingSessionId;
+        if (sessionId == null || view == null) {
+            return;
+        }
+        pendingSessionId = null;
+        String quoted = sessionId.replace("\\", "\\\\").replace("\"", "\\\"");
+        String script = "(function(){"
+                + "var id=\"" + quoted + "\";"
+                + "function find(){"
+                + "return document.querySelector('[data-row-key=\"'+id+'\"]')"
+                + "||document.querySelector('[data-session-id=\"'+id+'\"]')"
+                + "||document.querySelector('[data-row-key^=\"'+id+'\"]');"
+                + "}"
+                + "var el=find();"
+                + "if(el){el.click();return 'clicked';}"
+                + "if(window.__DSH_OPEN_SESSION__){window.__DSH_OPEN_SESSION__(id);return 'api';}"
+                + "return 'missing';"
+                + "})()";
+        view.evaluateJavascript(script, v -> {
+            Log.i("DshMain", "session deep link result: " + v);
+        });
     }
 
     @Override
