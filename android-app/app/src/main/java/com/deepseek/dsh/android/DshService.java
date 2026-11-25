@@ -589,6 +589,7 @@ public class DshService extends Service {
                     fileCount++;
                     if (fileCount % 200 == 0) {
                         Log.i(TAG, "extraction progress: " + fileCount + " files...");
+                        writeProgress(assetPath, fileCount);
                     }
                 }
                 try {
@@ -600,6 +601,18 @@ public class DshService extends Service {
         }
         Log.i(TAG, "extraction done: " + fileCount + " files, " + dirCount + " dirs -> "
                 + targetCanonical);
+        if (onlyEntry == null) {
+            writeProgress(assetPath, -1);
+        }
+    }
+
+    private void writeProgress(String assetPath, int files) {
+        File file = new File(getFilesDir(), "progress.txt");
+        try (FileWriter fw = new FileWriter(file, false)) {
+            fw.write(assetPath + "|" + files);
+        } catch (IOException e) {
+            Log.w(TAG, "write progress failed", e);
+        }
     }
 
     private void ensureDir(File dir) {
