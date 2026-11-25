@@ -109,8 +109,68 @@ public class DshService extends Service {
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        Log.i(TAG, "onTaskRemoved: task swiped away; foreground service keeps node alive");
+        Log.i(TAG, "onTaskRemoved: task cleared; shutting down runtime completely");
+        serviceStopping.set(true);
+        workerBusy.set(false);
+        mainHandler.removeCallbacksAndMessages(null);
+        final Process p = nodeProcess;
+        nodeProcess = null;
+        if (p != null) {
+            p.destroy();
+            new Thread(() -> {
+                try {
+                    Thread.sleep(1500);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                if (p.isAlive()) {
+                    p.destroyForcibly();
+                    Log.w(TAG, "node process force-killed after task removal");
+                }
+            }, "dsh-taskremoved-kill").start();
+        }
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
+        Log.i(TAG, "onTaskRemoved: service stopped, no residual process");
+        new Thread(() -> {
+            try {
+                Thread.sleep(900);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (!serviceStopping.get()) {
+                return;
+            }
+            if (isUserVisible()) {
+                Log.i(TAG, "onTaskRemoved: app became visible again; keep process");
+                return;
+            }
+            Log.i(TAG, "onTaskRemoved: exiting process to leave no residual");
+            android.os.Process.killProcess(android.os.Process.myPid());
+        }, "dsh-exit").start();
         super.onTaskRemoved(rootIntent);
+    }
+
+    private boolean isUserVisible() {
+        try {
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            if (am == null) {
+                return false;
+            }
+            int pid = android.os.Process.myPid();
+            for (android.app.ActivityManager.RunningAppProcessInfo info
+                    : am.getRunningAppProcesses()) {
+                if (info.pid == pid) {
+                    return info.importance
+                            <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "visibility check failed", e);
+        }
+        return false;
     }
 
     @Override
