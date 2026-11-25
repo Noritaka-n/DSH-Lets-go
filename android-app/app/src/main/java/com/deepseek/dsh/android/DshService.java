@@ -214,6 +214,7 @@ public class DshService extends Service {
                 Log.e(TAG_SHELL, "shell tool preparation failed", e);
             }
             ensureDir(new File(getFilesDir(), "tmp"));
+            writeOfficeWrapper(binDir);
 
             runShellSelfTest(binDir, nativeDir, abiLibs.getAbsolutePath());
             File nodeBin = new File(nativeDir, NODE_BINARY_NAME);
@@ -543,6 +544,22 @@ public class DshService extends Service {
                 executor.execute(this::runNodeLoop);
             }
         }, RESTART_DELAY_MS);
+    }
+
+    private void writeOfficeWrapper(File binDir) {
+        File wrapper = new File(binDir, "office-convert");
+        String script = "#!/system/bin/sh\n"
+                + "exec \"${DSH_NODE_BIN:-node}\" \"$HOME/runtime/dsh/vendor/office/convert.cjs\" \"$@\"\n";
+        try {
+            ensureDir(binDir);
+            try (FileOutputStream fos = new FileOutputStream(wrapper)) {
+                fos.write(script.getBytes(StandardCharsets.UTF_8));
+            }
+            wrapper.setExecutable(true, false);
+            Log.i(TAG, "office-convert wrapper ready at " + wrapper.getAbsolutePath());
+        } catch (IOException e) {
+            Log.w(TAG, "office-convert wrapper failed", e);
+        }
     }
 
     private void unzipAsset(String assetPath, File targetDir) throws IOException {
