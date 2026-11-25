@@ -29,7 +29,6 @@ import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.BufferedReader;
@@ -60,11 +59,9 @@ public class MainActivity extends Activity {
     private Button apiKeyButton;
     private Button saveApiKeyButton;
     private Button storageButton;
-    private TextView settingsEntry;
     private Button settingsStorageButton;
     private EditText apiKeyInput;
     private WebView webView;
-    private ProgressBar extractionProgress;
     private volatile int lastLoggedProgress = -1;
     private boolean awaitingStoragePermission;
     private volatile boolean pageLoaded = false;
@@ -114,25 +111,18 @@ public class MainActivity extends Activity {
         rootLayout.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+        rootLayout.setBackgroundColor(Color.rgb(12, 30, 52));
+
         statusView = new TextView(this);
-        statusView.setText("DSH 启动中…\n\n正在等待本地 web 运行时就绪 (127.0.0.1:3080)");
-        statusView.setTextSize(18f);
-        statusView.setTextColor(Color.WHITE);
-        statusView.setBackgroundColor(Color.BLACK);
+        statusView.setText("正在启动…");
+        statusView.setTextSize(15f);
+        statusView.setTextColor(Color.parseColor("#B3FFFFFF"));
         statusView.setGravity(Gravity.CENTER);
+        statusView.setPadding(pad, pad, pad, pad);
         statusView.setVisibility(View.VISIBLE);
         rootLayout.addView(statusView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        extractionProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        extractionProgress.setMax(19803);
-        extractionProgress.setProgress(0);
-        extractionProgress.setVisibility(View.GONE);
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        int ppad = (int) (16 * getResources().getDisplayMetrics().density);
-        progressParams.setMargins(ppad, 0, ppad, ppad);
-        rootLayout.addView(extractionProgress, progressParams);
 
         apiKeyButton = new Button(this);
         apiKeyButton.setText("API Key 设置");
@@ -141,22 +131,10 @@ public class MainActivity extends Activity {
         storageButton = new Button(this);
         storageButton.setOnClickListener(v -> openStorageTreePicker());
 
-        int pad = (int) (12 * getResources().getDisplayMetrics().density);
         keepAliveButton = new Button(this);
         keepAliveButton.setText("后台保活设置（允许自启动 + 电池不限制）");
         keepAliveButton.setOnClickListener(v -> openOemAutoStartSettings());
         keepAliveButton.setPadding(pad, pad / 2, pad, pad / 2);
-
-        settingsEntry = new TextView(this);
-        settingsEntry.setText("设置");
-        settingsEntry.setTextSize(13f);
-        settingsEntry.setTextColor(Color.parseColor("#888888"));
-        settingsEntry.setGravity(Gravity.CENTER);
-        settingsEntry.setPadding(pad, pad, pad, pad * 2);
-        settingsEntry.setOnClickListener(v -> showApiKeySettings());
-        LinearLayout.LayoutParams entryParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rootLayout.addView(settingsEntry, entryParams);
 
         settingsLayout = new LinearLayout(this);
         settingsLayout.setOrientation(LinearLayout.VERTICAL);
@@ -312,15 +290,11 @@ public class MainActivity extends Activity {
     private void setWaiting(boolean waiting) {
         settingsLayout.setVisibility(View.GONE);
         statusView.setVisibility(waiting ? View.VISIBLE : View.GONE);
-        settingsEntry.setVisibility(waiting ? View.VISIBLE : View.GONE);
         webView.setVisibility(waiting ? View.GONE : View.VISIBLE);
-        if (!waiting) {
-            extractionProgress.setVisibility(View.GONE);
-        }
     }
 
     private void updateExtractionProgress() {
-        if (extractionProgress == null || pageLoaded) {
+        if (statusView == null || pageLoaded) {
             return;
         }
         String raw = readSingleLineFile("progress.txt");
@@ -339,18 +313,12 @@ public class MainActivity extends Activity {
             return;
         }
         if (files < 0) {
-            extractionProgress.setVisibility(View.GONE);
-            statusView.setText("DSH 启动中…\n\n正在启动本地运行时 (127.0.0.1:3080)");
             return;
         }
         if (files == lastLoggedProgress) {
             return;
         }
         lastLoggedProgress = files;
-        extractionProgress.setVisibility(View.VISIBLE);
-        extractionProgress.setProgress(files);
-        String label = asset.contains("runtime") ? "运行时" : "组件";
-        statusView.setText("DSH 启动中…\n\n正在解压" + label + " " + files + " 个文件");
         Log.i("DshMain", "extraction progress: " + asset + " " + files);
     }
 
@@ -360,7 +328,6 @@ public class MainActivity extends Activity {
         apiKeyButton.setVisibility(View.GONE);
         storageButton.setVisibility(View.GONE);
         keepAliveButton.setVisibility(View.GONE);
-        settingsEntry.setVisibility(View.GONE);
         webView.setVisibility(View.GONE);
         settingsLayout.setVisibility(View.VISIBLE);
         boolean hasKey = hasStoredApiKey();
@@ -511,6 +478,7 @@ public class MainActivity extends Activity {
             settingsStatusView.setText(message);
         } else {
             statusView.setText(message);
+            statusView.setVisibility(View.VISIBLE);
         }
     }
 
