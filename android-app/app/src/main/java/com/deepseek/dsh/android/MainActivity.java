@@ -272,11 +272,6 @@ public class MainActivity extends Activity {
         updateStorageButtons();
         applyImmersiveMode();
 
-        if (!hasStoredApiKey() && !hasLegacyCredentials()) {
-            showApiKeySettings();
-            return;
-        }
-
         startDshService();
         requestIgnoreBatteryOptimizationsIfNeeded();
 

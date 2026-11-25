@@ -190,12 +190,9 @@ public class DshService extends Service {
         try {
             File dshHomeDir = new File(getFilesDir(), "dsh-home");
             String apiKey = resolveApiKey(dshHomeDir);
-            if (apiKey == null) {
-                Log.i(TAG, "no API key available; waiting for user setup");
-                notifyState("需要 API Key", "请打开 DSH 并在 API Key 设置中保存密钥");
-                workerBusy.set(false);
-                stopSelf();
-                return;
+            if (apiKey == null || apiKey.isEmpty()) {
+                Log.i(TAG, "no API key configured; starting runtime anyway (configure inside DSH UI)");
+                apiKey = null;
             }
             String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "x86_64";
             File runtimeRoot = new File(getFilesDir(), "runtime");
@@ -341,9 +338,13 @@ public class DshService extends Service {
             env.put("DSH_NODE_BIN", nodeBin.getAbsolutePath());
             env.put("DSH_PNPM_JS", filesDir + "/runtime/dsh/pnpm/pnpm.js");
             env.put("DSH_NPM_JS", filesDir + "/runtime/dsh/pnpm/npm.js");
-            env.put("DEEPSEEK_API_KEY", apiKey);
-            env.put("W_API_KEY", apiKey);
-            Log.i(TAG, "API key injected from Android Keystore; length=" + apiKey.length());
+            if (apiKey != null && !apiKey.isEmpty()) {
+                env.put("DEEPSEEK_API_KEY", apiKey);
+                env.put("W_API_KEY", apiKey);
+                Log.i(TAG, "API key injected from Android Keystore; length=" + apiKey.length());
+            } else {
+                Log.i(TAG, "starting without API key; user configures inside DSH UI");
+            }
 
             env.put("TMPDIR", filesDir + "/tmp");
             env.put("PATH", binDir.getAbsolutePath() + ":" + nativeDir + ":"
