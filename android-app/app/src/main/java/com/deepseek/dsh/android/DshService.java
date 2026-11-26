@@ -371,6 +371,7 @@ public class DshService extends Service {
                 notificationBridge.observe(line);
                 if (line.startsWith(WEB_URL_PREFIX)) {
                     writeWebUrl(line.substring(WEB_URL_PREFIX.length()).trim());
+                    autoRestartCount = 0;
                 }
             }
 
@@ -410,10 +411,7 @@ public class DshService extends Service {
         if (!migrated.equals(verified)) {
             throw new IOException("Encrypted credential verification failed");
         }
-        if (legacyFile.exists() && !legacyFile.delete()) {
-            throw new IOException("Legacy plaintext credential deletion failed");
-        }
-        Log.i(TAG, "legacy API key migrated to Android Keystore; plaintext removed");
+        Log.i(TAG, "legacy API key mirrored into Android Keystore; original file kept for DSH");
         return verified;
     }
 

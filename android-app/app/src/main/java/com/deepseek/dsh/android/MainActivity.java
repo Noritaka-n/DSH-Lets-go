@@ -62,7 +62,6 @@ public class MainActivity extends Activity {
     private Button settingsStorageButton;
     private EditText apiKeyInput;
     private WebView webView;
-    private volatile int lastLoggedProgress = -1;
     private boolean awaitingStoragePermission;
     private volatile boolean pageLoaded = false;
     private volatile String loadedUrl = null;
@@ -74,7 +73,6 @@ public class MainActivity extends Activity {
             if (pageLoaded) {
                 return;
             }
-            updateExtractionProgress();
             final String url = readPreferredLaunchUrl();
             if (url == null) {
                 handler.postDelayed(this, POLL_INTERVAL_MS);
@@ -90,7 +88,9 @@ public class MainActivity extends Activity {
                         loadedUrl = url;
                         pageLoaded = true;
                         setWaiting(false);
-                        webView.loadUrl(url);
+                        if (webView != null) {
+                            webView.loadUrl(url);
+                        }
                     } else {
                         handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
                     }
@@ -290,36 +290,9 @@ public class MainActivity extends Activity {
     private void setWaiting(boolean waiting) {
         settingsLayout.setVisibility(View.GONE);
         statusView.setVisibility(waiting ? View.VISIBLE : View.GONE);
-        webView.setVisibility(waiting ? View.GONE : View.VISIBLE);
-    }
-
-    private void updateExtractionProgress() {
-        if (statusView == null || pageLoaded) {
-            return;
+        if (webView != null) {
+            webView.setVisibility(waiting ? View.GONE : View.VISIBLE);
         }
-        String raw = readSingleLineFile("progress.txt");
-        if (raw == null) {
-            return;
-        }
-        int sep = raw.indexOf('|');
-        if (sep <= 0) {
-            return;
-        }
-        String asset = raw.substring(0, sep);
-        int files;
-        try {
-            files = Integer.parseInt(raw.substring(sep + 1).trim());
-        } catch (NumberFormatException e) {
-            return;
-        }
-        if (files < 0) {
-            return;
-        }
-        if (files == lastLoggedProgress) {
-            return;
-        }
-        lastLoggedProgress = files;
-        Log.i("DshMain", "extraction progress: " + asset + " " + files);
     }
 
     private void showApiKeySettings() {
@@ -514,6 +487,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (webView != null) {
+            webView.onResume();
+        }
         updateStorageButtons();
         if (awaitingStoragePermission) {
             if (hasRawStorageAccess()) {
@@ -521,6 +497,10 @@ public class MainActivity extends Activity {
             } else {
                 showStorageStatus("请在系统设置中允许 DSH 管理所有文件，然后返回应用");
             }
+        }
+        if (!pageLoaded && settingsLayout.getVisibility() != View.VISIBLE) {
+            handler.removeCallbacks(urlPoller);
+            handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
         }
     }
 
@@ -542,13 +522,10 @@ public class MainActivity extends Activity {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) {
                 controller.hide(WindowInsets.Type.systemBars());
-                controller.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             }
         } else {
             getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                             | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
@@ -699,16 +676,24 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (settingsLayout.getVisibility() == View.VISIBLE
-                && (hasStoredApiKey() || hasLegacyCredentials())) {
-            setWaiting(true);
-            startDshService();
-            handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
-        } else if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
+        if (settingsLayout.getVisibility() == View.VISIBLE) {
+            settingsLayout.setVisibility(View.GONE);
+            if (pageLoaded && webView != null) {
+                statusView.setVisibility(View.GONE);
+                webView.setVisibility(View.VISIBLE);
+            } else {
+                setWaiting(true);
+                handler.removeCallbacks(urlPoller);
+                handler.postDelayed(urlPoller, POLL_INTERVAL_MS);
+            }
+            return;
         }
+        if (webView != null && webView.getVisibility() == View.VISIBLE
+                && webView.canGoBack()) {
+            webView.goBack();
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -757,8 +742,20 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        if (webView != null) {
+            webView.onPause();
+        }
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
         handler.removeCallbacks(urlPoller);
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
         super.onDestroy();
     }
 }
